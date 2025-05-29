@@ -20,6 +20,7 @@ export class UpdateFiguraDto extends PartialType(CreateFiguraDto) {
         rotation?: number;
         opacity?: number;
         vistaId?: string;
+        imageUrl?:string
         //paginaId?: string;
         zIndex?: number;
         additionalProps?: Record<string, any>;

@@ -11,14 +11,17 @@ import {
   ProcessedResponse, 
   MainApp 
 } from './openai.interfaces';
-
+import { FiguraService } from 'src/figura/figura.service';
+import { ModuleRef } from '@nestjs/core';
 @Injectable()
 export class OpenAIService {
   private openai: OpenAI;
   private readonly logger = new Logger('OpenAIService');
 
   constructor(
-    private configService: ConfigService
+    private configService: ConfigService,
+    private readonly moduleRef: ModuleRef
+    
   ) {
     // Inicializar el cliente OpenAI con la API key desde las variables de entorno
     this.openai = new OpenAI({
@@ -725,4 +728,190 @@ class MyApp extends StatelessWidget {
       .map(word => word.charAt(0).toUpperCase() + word.slice(1))
       .join('');
   }
+
+
+  /**
+ * Extrae elementos de UI a partir de una imagen utilizando OpenAI
+ * @param {Buffer} imageBuffer - La imagen en formato Buffer
+ * @param {string} vistaId - ID de la vista donde se agregarán las figuras
+ * @param {string} description - Descripción opcional para la IA
+ * @returns {Promise<Array>} - Las figuras creadas en la base de datos
+ */
+async extractUIElementsFromImage(
+  imageBuffer: Buffer,
+  vistaId: string,
+  description: string = ''
+): Promise<any[]> {
+  try {
+    this.logger.log('Analizando imagen para extraer elementos de UI...');
+    
+    // 1. Convertir imagen a base64
+    const imageBase64 = this.prepareImageBase64(imageBuffer);
+    
+    // 2. Llamar a la API de OpenAI para analizar la imagen
+    const response = await this.openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'system',
+          content: `Eres un experto en diseño de interfaces de usuario que puede identificar elementos de UI en bocetos o dibujos a mano.
+           
+Tu tarea es analizar la imagen y detectar todos los elementos de UI (botones, cuadros de texto, imágenes, etc.) 
+incluyendo sus posiciones aproximadas y tamaños. Debes convertir esta información en especificaciones JSON 
+que se puedan usar para recrear estos elementos en un canvas.
+
+INSTRUCCIONES IMPORTANTES:
+1. Identifica cada elemento visible en la imagen (rectángulos, círculos, textos, etc.).
+2. Para cada elemento, especifica: tipo, posición (x, y), dimensiones (ancho/alto o radio), y propiedades adicionales como texto o color.
+3. Utiliza coordenadas relativas dentro de un lienzo de 1200x800 píxeles.
+4. Devuelve un array JSON con todos los elementos encontrados.
+5. Asegúrate de que cada elemento tenga todas las propiedades requeridas según su tipo.
+
+TIPOS DE FIGURAS COMPATIBLES:
+- rectangle: requiere x, y, width, height, fill (color), stroke, strokeWidth
+- circle: requiere x, y, radius, fill, stroke, strokeWidth
+- text: requiere x, y, text, fontSize, fontFamily, fill
+- line: requiere x, y, points (array de coordenadas [x1, y1, x2, y2])
+
+EJEMPLO DE RESPUESTA:
+[
+  {
+    "tipo": "rectangle",
+    "x": 100,
+    "y": 50,
+    "width": 200,
+    "height": 80,
+    "fill": "#4285F4",
+    "stroke": "#000000",
+    "strokeWidth": 1
+  },
+  {
+    "tipo": "text",
+    "x": 130,
+    "y": 80,
+    "text": "Botón de Guardar",
+    "fontSize": 18,
+    "fontFamily": "Arial",
+    "fill": "#FFFFFF"
+  },
+  {
+    "tipo": "circle",
+    "x": 400,
+    "y": 200,
+    "radius": 40,
+    "fill": "#FBBC05",
+    "stroke": "#000000",
+    "strokeWidth": 2
+  }
+]`
+        },
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: `Por favor, analiza esta imagen de un boceto/dibujo de interfaz de usuario ${description ? ' que ' + description : ''}.
+              
+Identifica todos los elementos de UI y genera las especificaciones JSON para recrearlos en un canvas. 
+Utiliza coordenadas relativas para un lienzo de 1200x800 píxeles.
+
+Devuelve SOLO el array JSON con los elementos, sin ningún texto adicional.`
+            },
+            {
+              type: 'image_url',
+              image_url: {
+                url: `data:image/png;base64,${imageBase64}`
+              }
+            }
+          ]
+        }
+      ],
+      temperature: 0.2,
+      max_tokens: 4000
+    });
+    
+    // 3. Procesar la respuesta
+    const content = response.choices[0].message.content;
+    if (!content) {
+      throw new Error('La respuesta de OpenAI no contiene contenido');
+    }
+    
+    // 4. Extraer el array JSON
+    const jsonMatch = content.match(/\[\s*\{[\s\S]*\}\s*\]/);
+    let uiElements = [];
+    
+    if (jsonMatch) {
+      try {
+        uiElements = JSON.parse(jsonMatch[0]);
+      } catch (error) {
+        this.logger.error(`Error al parsear JSON de elementos UI: ${error.message}`);
+        throw new Error('No se pudo procesar la respuesta de la IA. Formato incorrecto.');
+      }
+    } else {
+      // Intento alternativo: toda la respuesta podría ser un JSON válido
+      try {
+        uiElements = JSON.parse(content);
+        if (!Array.isArray(uiElements)) {
+          throw new Error('La respuesta no es un array');
+        }
+      } catch (error) {
+        this.logger.error(`Error al parsear respuesta completa como JSON: ${error.message}`);
+        throw new Error('No se pudo procesar la respuesta de la IA. Formato incorrecto.');
+      }
+    }
+    
+    // 5. Crear las figuras en la base de datos
+    const createdFigures = await this.createFiguresFromUIElements(uiElements, vistaId);
+    
+    return createdFigures;
+  } catch (error) {
+    this.logger.error(`Error al analizar imagen para UI: ${error.message}`);
+    throw new Error(`Error al procesar la imagen: ${error.message}`);
+  }
+}
+
+
+private async createFiguresFromUIElements(uiElements: any[], vistaId: string): Promise<any[]> {
+  try {
+    // Obtener la instancia del servicio de figuras
+    const figuraService = this.moduleRef.get(FiguraService, { strict: false });
+    
+    if (!figuraService) {
+      throw new Error('No se pudo obtener el servicio de figuras');
+    }
+    
+    const createdFigures: any[] = [];
+    
+    // Procesar cada elemento y crear la figura correspondiente
+    for (const element of uiElements) {
+      try {
+        // Asegurarnos de que tiene todas las propiedades necesarias
+        const figuraData = {
+          ...element,
+          vistaId // Asignar el ID de la vista
+        };
+        
+        // Crear la figura en la base de datos
+        const createdFigure = await figuraService.create(figuraData);
+        createdFigures.push(createdFigure);
+        
+        this.logger.log(`Figura creada: ${createdFigure.id} (${element.tipo})`);
+      } catch (figureError) {
+        this.logger.error(`Error al crear figura individual: ${figureError.message}`);
+        // Continuar con las demás figuras en caso de error
+      }
+    }
+    
+    this.logger.log(`Total de figuras creadas: ${createdFigures.length} de ${uiElements.length}`);
+    return createdFigures;
+  } catch (error) {
+    this.logger.error(`Error al crear figuras a partir de elementos UI: ${error.message}`);
+    throw new Error(`Error al crear figuras: ${error.message}`);
+  }
+}
+
+
+
+
+
 }

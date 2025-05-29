@@ -30,6 +30,97 @@ export class OpenAIController {
 
   constructor(private readonly openaiService: OpenAIService) {}
 
+@Post('generate-ui-from-image')
+@Auth()
+@UseInterceptors(
+  FileInterceptor('image', {
+    storage: diskStorage({
+      destination: './uploads/sketches',
+      filename: (req, file, cb) => {
+        const uniqueSuffix = `${Date.now()}-${uuidv4()}`;
+        const ext = extname(file.originalname);
+        cb(null, `sketch-${uniqueSuffix}${ext}`);
+      },
+    }),
+    fileFilter: (req, file, cb) => {
+      if (!file.originalname.match(/\.(jpg|jpeg|png|gif|bmp)$/)) {
+        return cb(
+          new HttpException(
+            'Solo se permiten archivos de imagen',
+            HttpStatus.BAD_REQUEST
+          ),
+          false
+        );
+      }
+      cb(null, true);
+    },
+    limits: {
+      fileSize: 5 * 1024 * 1024, // 5MB tamaño máximo
+    },
+  })
+)
+async generateUIFromImage(
+  @UploadedFile() image,
+  @Body('vistaId') vistaId: string,
+  @Body('description') description: string,
+  @GetUser() user: User
+) {
+  try {
+    if (!image) {
+      throw new HttpException(
+        'No se proporcionó ninguna imagen',
+        HttpStatus.BAD_REQUEST
+      );
+    }
+
+    if (!vistaId || vistaId.trim() === '') {
+      throw new HttpException(
+        'El ID de la vista es obligatorio',
+        HttpStatus.BAD_REQUEST
+      );
+    }
+
+    this.logger.log(`Usuario ${user.id} solicitó interpretación de UI a partir de una imagen para la vista "${vistaId}"`);
+
+    // Leer la imagen como un Buffer
+    let imageBuffer;
+    if (image.buffer) {
+      imageBuffer = image.buffer;
+    } else if (image.path) {
+      imageBuffer = fs.readFileSync(image.path);
+    } else {
+      throw new HttpException(
+        'Formato de imagen no válido',
+        HttpStatus.BAD_REQUEST
+      );
+    }
+
+    // Procesar la imagen con OpenAI para extraer los elementos de UI
+    const uiElements = await this.openaiService.extractUIElementsFromImage(
+      imageBuffer,
+      vistaId,
+      description
+    );
+    
+    return {
+      success: true,
+      message: 'Elementos de UI extraídos exitosamente',
+      figuresCount: uiElements.length,
+      data: uiElements
+    };
+  } catch (error) {
+    this.logger.error(`Error al procesar imagen de UI: ${error.message}`);
+    
+    return {
+      success: false,
+      message: `Error al procesar imagen de UI: ${error.message}`,
+      error: error.message
+    };
+  }
+}
+
+
+
   @Post('generate-flutter-from-screenshot')
   @Auth()
   @UseInterceptors(
@@ -168,4 +259,5 @@ export class OpenAIController {
       error: 'Endpoint obsoleto'
     };
   }
+
 }

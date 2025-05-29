@@ -66,6 +66,10 @@ export class Figura {
 
     @Column({ type: 'int', nullable: true, default: 0 })
     zIndex: number;
+
+    // Nueva propiedad para la URL de la imagen (cuando tipo = 'image')
+    @Column({ type: 'text', nullable: true })
+    imageUrl: string;
   
     // Propiedades adicionales como JSON para extensibilidad
     @Column({ type: 'simple-json', nullable: true })
