@@ -260,4 +260,62 @@ async generateUIFromImage(
     };
   }
 
+
+  @Post('generate-ui-from-prompt')
+  @Auth()
+  async generateUIFromPrompt(
+    @Body('vistaId') vistaId: string,
+    @Body('prompt') prompt: string,
+    @Body('options') options: {
+      style?: string;
+      colorScheme?: string;
+      complexity?: string;
+    } = {},
+    @GetUser() user: User
+  ) {
+    try {
+      if (!vistaId || vistaId.trim() === '') {
+        throw new HttpException(
+          'El ID de la vista es obligatorio',
+          HttpStatus.BAD_REQUEST
+        );
+      }
+  
+      if (!prompt || prompt.trim() === '') {
+        throw new HttpException(
+          'El prompt es obligatorio',
+          HttpStatus.BAD_REQUEST
+        );
+      }
+  
+      this.logger.log(`Usuario ${user.id} solicitó generación de UI desde prompt para la vista "${vistaId}"`);
+  
+      // Procesar el prompt con OpenAI para extraer los elementos de UI
+      const uiElements = await this.openaiService.extractUIElementsFromPrompt(
+        prompt,
+        vistaId,
+        options
+      );
+      
+      return {
+        success: true,
+        message: 'Elementos de UI generados exitosamente desde el prompt',
+        figuresCount: uiElements.length,
+        data: uiElements,
+        options: options
+      };
+    } catch (error) {
+      this.logger.error(`Error al procesar prompt de UI: ${error.message}`);
+      
+      return {
+        success: false,
+        message: `Error al procesar prompt de UI: ${error.message}`,
+        error: error.message
+      };
+    }
+  }
+
+
+  
+
 }

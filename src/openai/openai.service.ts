@@ -911,7 +911,316 @@ private async createFiguresFromUIElements(uiElements: any[], vistaId: string): P
 }
 
 
+async extractUIElementsFromPrompt(
+  prompt: string,
+  vistaId: string,
+  options: {
+    style?: string;
+    colorScheme?: string;
+    complexity?: string;
+  } = {}
+): Promise<any[]> {
+  try {
+    this.logger.log('Analizando prompt para generar elementos de UI...');
+    
+    // Configurar colores según el esquema seleccionado
+    const colorSchemes = {
+      default: {
+        primary: '#1976d2',
+        secondary: '#dc004e',
+        success: '#2e7d32',
+        background: '#ffffff',
+        text: '#000000'
+      },
+      dark: {
+        primary: '#90caf9',
+        secondary: '#f48fb1',
+        success: '#66bb6a',
+        background: '#121212',
+        text: '#ffffff'
+      },
+      blue: {
+        primary: '#1976d2',
+        secondary: '#1565c0',
+        success: '#0d47a1',
+        background: '#e3f2fd',
+        text: '#0d47a1'
+      },
+      green: {
+        primary: '#2e7d32',
+        secondary: '#388e3c',
+        success: '#1b5e20',
+        background: '#e8f5e8',
+        text: '#1b5e20'
+      }
+    };
+    
+    const selectedColors = colorSchemes[options.colorScheme || 'default'] || colorSchemes.default;
+    
+    // Llamar a la API de OpenAI para analizar el prompt
+    const response = await this.openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'system',
+          content: `Eres un diseñador de interfaces de usuario experto que puede interpretar descripciones textuales y crear interfaces completas y modernas.
+           
+Tu tarea es analizar la descripción proporcionada y generar todos los elementos de UI necesarios 
+incluyendo sus posiciones exactas, tamaños y propiedades visuales. Debes convertir esta información en especificaciones JSON 
+que se puedan usar para recrear estos elementos en un canvas.
+
+INSTRUCCIONES IMPORTANTES:
+1. Interpreta cada elemento descrito en el texto y crea una interfaz COMPLETA y FUNCIONAL.
+2. Para cada elemento, especifica: tipo, posición (x, y), dimensiones precisas, y propiedades visuales detalladas.
+3. IMPORTANTE: Utiliza coordenadas optimizadas para el viewport visible actual:
+   - Área de trabajo visible: aproximadamente 850x650 píxeles
+   - X: mínimo 10, máximo 800 (mantén margen derecho)
+   - Y: mínimo 10, máximo 600 (mantén margen inferior)
+   - Nunca coloques elementos en coordenadas X > 800 o Y > 600
+4. Distribuye los elementos de manera lógica, balanceada y estéticamente superior DENTRO del área visible actual.
+5. Devuelve un array JSON con todos los elementos necesarios para una interfaz completa.
+6. Asegúrate de que cada elemento tenga todas las propiedades requeridas según su tipo.
+
+GUÍA DE LAYOUT PARA EL VIEWPORT ACTUAL:
+- Sidebar: X: 10-180, Y: 10-600, width: 160-170
+- Contenido principal: X: 200-800, Y: 10-600  
+- Header/métricas superiores: X: 200-800, Y: 10-80
+- Contenido central: X: 200-800, Y: 100-600
+- Títulos principales: X: 220-600, Y: 20-50
+- Botones: X: 220-700, Y: según contexto
+- Tarjetas de métricas: width: 140-180, distribuidas horizontalmente con spacing de 20px
+
+ESPACIADO OPTIMIZADO:
+- Mínimo 10px desde los bordes del viewport
+- Mínimo 10px entre elementos
+- Para elementos que deben estar alineados, usa las mismas coordenadas X o Y
+
+TIPOS DE FIGURAS COMPATIBLES:
+- rectangle: requiere tipo, x, y, width, height, fill, stroke, strokeWidth
+- circle: requiere tipo, x, y, radius, fill, stroke, strokeWidth  
+- text: requiere tipo, x, y, text, fontSize, fontFamily, fill
+- line: requiere tipo, x, y, points (array de coordenadas [x1, y1, x2, y2])
+
+CONFIGURACIÓN DE DISEÑO ACTUAL:
+- ESTILO SOLICITADO: ${options.style || 'modern'}
+${this.getStyleInstructions(options.style || 'modern')}
+- Esquema de colores: ${options.colorScheme || 'default'}
+- Complejidad: ${options.complexity || 'medium'} (genera una interfaz de complejidad ${options.complexity || 'medium'})
+
+PALETA DE COLORES A USAR:
+- Color primario: ${selectedColors.primary}
+- Color secundario: ${selectedColors.secondary}
+- Color de éxito: ${selectedColors.success}
+- Fondo: ${selectedColors.background}
+- Texto: ${selectedColors.text}
+
+REGLAS DE DISEÑO MEJORADAS:
+- Los títulos principales deben ser grandes (fontSize: 24-36) y prominentes
+- Los botones deben tener diseño atractivo (width: 120-250, height: 45-65) con colores de la paleta
+- Los textos deben ser legibles (fontSize: 14-20 para contenido) con jerarquía visual clara
+- Usa los colores de la paleta especificada para crear armonía visual
+- Deja espaciado generoso entre elementos (mínimo 20px)
+- Los elementos deben estar perfectamente alineados
+- Crea tarjetas, contenedores y secciones visuales cuando sea apropiado
+- Incluye elementos decorativos como líneas separadoras, iconos representados como círculos, etc.
+
+COMPLEJIDAD SOLICITADA: ${options.complexity || 'medium'}
+${this.getComplexityInstructions(options.complexity || 'medium')}
+
+EJEMPLO DE RESPUESTA PARA PANEL DE ADMINISTRACIÓN (VIEWPORT ACTUAL):
+[
+  {
+    "tipo": "rectangle",
+    "x": 10,
+    "y": 10,
+    "width": 170,
+    "height": 580,
+    "fill": "${selectedColors.background}",
+    "stroke": "#e0e0e0",
+    "strokeWidth": 1
+  },
+  {
+    "tipo": "text",
+    "x": 25,
+    "y": 35,
+    "text": "Panel de Administración",
+    "fontSize": 16,
+    "fontFamily": "Arial",
+    "fill": "${selectedColors.text}"
+  },
+  {
+    "tipo": "rectangle",
+    "x": 200,
+    "y": 10,
+    "width": 180,
+    "height": 70,
+    "fill": "${selectedColors.primary}",
+    "stroke": "${selectedColors.primary}",
+    "strokeWidth": 0
+  },
+  {
+    "tipo": "text",
+    "x": 220,
+    "y": 35,
+    "text": "Métrica 1",
+    "fontSize": 14,
+    "fontFamily": "Arial",
+    "fill": "#FFFFFF"
+  },
+  {
+    "tipo": "rectangle",
+    "x": 400,
+    "y": 10,
+    "width": 180,
+    "height": 70,
+    "fill": "${selectedColors.secondary}",
+    "stroke": "${selectedColors.secondary}",
+    "strokeWidth": 0
+  },
+  {
+    "tipo": "text",
+    "x": 420,
+    "y": 35,
+    "text": "Métrica 2",
+    "fontSize": 14,
+    "fontFamily": "Arial",
+    "fill": "#FFFFFF"
+  }
+]`
+        },
+        {
+          role: 'user',
+          content: `Por favor, analiza esta descripción de interfaz de usuario y genera las especificaciones JSON para recrearla en un canvas:
+
+"${prompt}"
+
+Crea una interfaz ${options.style || 'moderna'} completa y funcional con esquema de colores ${options.colorScheme || 'por defecto'} y complejidad ${options.complexity || 'media'}. 
+
+CRÍTICO: Mantén TODOS los elementos dentro del área visible actual (X: 10-800, Y: 10-600). Ningún elemento debe estar en X > 800 o Y > 600. El área de trabajo visible es de aproximadamente 850x650 píxeles.
+
+Incluye todos los elementos necesarios con posiciones exactas dentro del área visible, tamaños apropiados y estilos visuales atractivos usando la paleta de colores especificada.
+
+Devuelve SOLO el array JSON con los elementos, sin ningún texto adicional.`
+        }
+      ],
+      temperature: 0.3,
+      max_tokens: 4000
+    });
+    
+    // Procesar la respuesta
+    const content = response.choices[0].message.content;
+    if (!content) {
+      throw new Error('La respuesta de OpenAI no contiene contenido');
+    }
+    
+    // Extraer el array JSON
+    const jsonMatch = content.match(/\[\s*\{[\s\S]*\}\s*\]/);
+    let uiElements = [];
+    
+    if (jsonMatch) {
+      try {
+        uiElements = JSON.parse(jsonMatch[0]);
+      } catch (error) {
+        this.logger.error(`Error al parsear JSON de elementos UI: ${error.message}`);
+        throw new Error('No se pudo procesar la respuesta de la IA. Formato incorrecto.');
+      }
+    } else {
+      // Intento alternativo: toda la respuesta podría ser un JSON válido
+      try {
+        uiElements = JSON.parse(content);
+        if (!Array.isArray(uiElements)) {
+          throw new Error('La respuesta no es un array');
+        }
+      } catch (error) {
+        this.logger.error(`Error al parsear respuesta completa como JSON: ${error.message}`);
+        throw new Error('No se pudo procesar la respuesta de la IA. Formato incorrecto.');
+      }
+    }
+    
+    // Validar que tenemos elementos
+    if (!Array.isArray(uiElements) || uiElements.length === 0) {
+      throw new Error('No se generaron elementos de UI válidos');
+    }
+    
+    // Crear las figuras en la base de datos (usando tu método existente que ya funciona)
+    const createdFigures = await this.createFiguresFromUIElements(uiElements, vistaId);
+    
+    this.logger.log(`Se crearon ${createdFigures.length} figuras desde el prompt`);
+    return createdFigures;
+  } catch (error) {
+    this.logger.error(`Error al analizar prompt para UI: ${error.message}`);
+    throw new Error(`Error al procesar el prompt: ${error.message}`);
+  }
+}
 
 
+
+private getStyleInstructions(style: string): string {
+  const styleInstructions = {
+    modern: `
+- Usa esquinas redondeadas en rectángulos (simula con strokeWidth más grueso)
+- Espaciado amplio entre elementos (mínimo 20px)
+- Botones con colores vibrantes
+- Texto con tipografía clara y moderna
+- Sombras simuladas con múltiples rectángulos superpuestos`,
+    
+    classic: `
+- Usa bordes rectos y definidos
+- Espaciado moderado entre elementos (10-15px)
+- Colores más conservadores y tradicionales
+- Texto con tipografía serif cuando sea posible
+- Elementos bien alineados en grillas`,
+    
+    minimal: `
+- Usa mucho espacio en blanco
+- Elementos mínimos y esenciales únicamente
+- Colores neutros y sutiles
+- Texto con tipografía limpia
+- Líneas finas y delicadas`,
+    
+    material: `
+- Simula elevaciones con sombras (rectángulos superpuestos)
+- Usa colores del esquema Material Design
+- Espaciado consistente basado en grilla de 8px
+- Botones con esquinas ligeramente redondeadas
+- Jerarquía visual clara`,
+    
+    flat: `
+- Sin sombras ni efectos 3D
+- Colores sólidos y vibrantes
+- Bordes limpios y definidos
+- Iconos y elementos planos
+- Contraste alto entre elementos`
+  };
+  
+  return styleInstructions[style] || styleInstructions.modern;
+}
+
+/**
+ * Obtiene instrucciones específicas para la complejidad seleccionada
+ */
+private getComplexityInstructions(complexity: string): string {
+  const complexityInstructions = {
+    simple: `
+- Incluye solo los elementos esenciales mínimos
+- Máximo 5-7 elementos en total
+- Funcionalidad básica únicamente
+- Diseño limpio y directo`,
+    
+    medium: `
+- Incluye elementos estándar más algunas características adicionales
+- Entre 8-15 elementos en total
+- Funcionalidad completa pero no abrumadora
+- Balance entre características y simplicidad`,
+    
+    complex: `
+- Incluye muchos elementos detallados y características avanzadas
+- Más de 15 elementos en total
+- Funcionalidad completa con opciones adicionales
+- Puede incluir: filtros, búsquedas, menús, barras de navegación, etc.`
+  };
+  
+  return complexityInstructions[complexity] || complexityInstructions.medium;
+}
 
 }
