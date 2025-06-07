@@ -41,10 +41,12 @@ export class VistaService {
       throw new Error('El proyecto especificado no existe');
     }
 
-    const vistas= this.vistaRepository.find({ where:{ proyecto: {id}}})
-    return vistas
-    
-    return `This action returns all vista`;
+    const vistas = await this.vistaRepository.find({ 
+      where: { proyecto: { id } },
+      relations: ['proyecto']
+    });
+  
+    return vistas;
   }
 
   findOne(id: number) {

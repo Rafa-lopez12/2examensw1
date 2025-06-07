@@ -9,10 +9,13 @@ import {
   FlutterService, 
   FlutterScreen, 
   ProcessedResponse, 
-  MainApp 
+  MainApp, 
+  ScreenshotGenerationParams
 } from './openai.interfaces';
-import { FiguraService } from 'src/figura/figura.service';
+import { FiguraService } from '../figura/figura.service';
 import { ModuleRef } from '@nestjs/core';
+import { VistaService } from '../vista/vista.service';
+import { AutoNavigationService } from './auto-navigation.service';
 @Injectable()
 export class OpenAIService {
   private openai: OpenAI;
@@ -20,7 +23,8 @@ export class OpenAIService {
 
   constructor(
     private configService: ConfigService,
-    private readonly moduleRef: ModuleRef
+    private readonly moduleRef: ModuleRef,
+    private readonly autoNavigationService: AutoNavigationService
     
   ) {
     // Inicializar el cliente OpenAI con la API key desde las variables de entorno
@@ -32,11 +36,7 @@ export class OpenAIService {
   /**
    * Genera código Flutter a partir de una captura de pantalla
    */
-  async generateFlutterCodeFromScreenshot(data: {
-    image: Buffer | string, // Imagen en formato base64 o Buffer
-    pageName: string,
-    description?: string
-  }): Promise<ProcessedResponse> {
+  async generateFlutterCodeFromScreenshot(data: ScreenshotGenerationParams): Promise<ProcessedResponse> {
     try {
       this.logger.log('Generando código Flutter a partir de captura de pantalla...');
       
@@ -65,6 +65,26 @@ export class OpenAIService {
         models: processedResult.models.length,
         services: processedResult.services.length
       })}`);
+
+
+      if (data.projectId) {
+        try {
+          this.logger.log(`Intentando generar navegación automática para proyecto ${data.projectId}`);
+          const navigationCode = await this.autoNavigationService.generateNavigationForProject(data.projectId);
+          
+          if (navigationCode) {
+            processedResult.navigationFiles = navigationCode;
+            this.logger.log(`Navegación automática generada exitosamente para proyecto ${data.projectId}`);
+          } else {
+            this.logger.log(`No se generó navegación para proyecto ${data.projectId} (probablemente < 2 vistas)`);
+          }
+        } catch (navError) {
+          this.logger.warn(`No se pudo generar navegación automática: ${navError.message}`);
+          // No fallar si la navegación falla, solo loguear warning
+        }
+      } else {
+        this.logger.log('No se proporcionó projectId, saltando generación de navegación automática');
+      }
       
       return processedResult;
     } catch (error) {
@@ -224,6 +244,7 @@ Recuerda: Genera código Flutter limpio y bien estructurado que implemente fielm
         });
         this.logger.log('main.dart generado automáticamente');
       }
+      
       
       return processedResult;
     } catch (error) {
@@ -1221,6 +1242,377 @@ private getComplexityInstructions(complexity: string): string {
   };
   
   return complexityInstructions[complexity] || complexityInstructions.medium;
+}
+
+
+private async generateProjectNavigationCode(projectId: string): Promise<any> {
+  try {
+    // Obtener todas las vistas del proyecto
+    const vistaService = this.moduleRef.get(VistaService, { strict: false });
+    const figuraService = this.moduleRef.get(FiguraService, { strict: false });
+    
+    if (!vistaService || !figuraService) {
+      throw new Error('Servicios de vista o figura no disponibles');
+    }
+
+    const vistas = await vistaService.findAll(projectId);
+    
+    if (!vistas || vistas.length < 2) {
+      // No generar navegación si hay menos de 2 vistas
+      return null;
+    }
+    // Obtener información detallada de cada vista
+    const vistaDetails = await Promise.all(
+      vistas.map(async (vista) => {
+        try {
+          const figuras = await figuraService.findAll(vista.id);
+          return {
+            id: vista.id,
+            nombre: vista.nombre,
+            figuras: figuras || []
+          };
+        } catch (error) {
+          this.logger.warn(`Error obteniendo figuras para vista ${vista.id}: ${error.message}`);
+          return {
+            id: vista.id,
+            nombre: vista.nombre,
+            figuras: []
+          };
+        }
+      })
+    );
+
+    // Analizar y generar código de navegación
+    const navigationStructure = await this.analyzeAndGenerateNavigation(vistaDetails);
+    
+    return navigationStructure;
+  } catch (error) {
+    this.logger.error(`Error generando navegación automática: ${error.message}`);
+    throw error;
+  }
+}
+
+
+private async analyzeAndGenerateNavigation(vistas: any[]): Promise<any> {
+  // Crear un análisis simple basado en las vistas disponibles
+  const routes = vistas.map((vista, index) => ({
+    name: this.toSnakeCase(vista.nombre),
+    screenName: this.toPascalCase(vista.nombre) + 'Screen',
+    path: `/${this.toSnakeCase(vista.nombre)}`,
+    isInitial: index === 0,
+    description: vista.nombre,
+    figuraCount: vista.figuras.length
+  }));
+
+  // Determinar pantalla inicial basada en patrones comunes
+  const initialRoute = this.determineInitialRoute(routes);
+  if (initialRoute) {
+    routes.forEach(route => {
+      route.isInitial = route.name === initialRoute;
+    });
+  }
+
+  // Generar archivos de navegación
+  const navigationFiles = {
+    appRoutes: this.generateAppRoutesFile(routes),
+    navigationUtils: this.generateNavigationUtilsFile(),
+    mainApp: this.generateMainAppFile(routes, vistas[0]?.nombre || 'MyApp'),
+    appNavigation: this.generateAppNavigationFile(routes)
+  };
+
+  return {
+    routes,
+    files: navigationFiles
+  };
+}
+
+/**
+ * Determina cuál debería ser la ruta inicial basada en nombres comunes
+ */
+private determineInitialRoute(routes: any[]): string | null {
+  const initialPatterns = [
+    'login', 'signin', 'auth', 'welcome', 'onboarding', 
+    'splash', 'home', 'dashboard', 'main', 'inicio'
+  ];
+
+  for (const pattern of initialPatterns) {
+    const foundRoute = routes.find(route => 
+      route.name.toLowerCase().includes(pattern) ||
+      route.description.toLowerCase().includes(pattern)
+    );
+    if (foundRoute) {
+      return foundRoute.name;
+    }
+  }
+
+  return null; // Usar la primera ruta por defecto
+}
+
+/**
+ * Genera el archivo app_routes.dart
+ */
+private generateAppRoutesFile(routes: any[]): string {
+  const initialRoute = routes.find(r => r.isInitial)?.name || routes[0]?.name || 'home';
+  
+  return `// lib/routes/app_routes.dart
+import 'package:flutter/material.dart';
+${routes.map(route => `import '../screens/${route.name}_screen.dart';`).join('\n')}
+
+class AppRoutes {
+  // Definición de rutas
+${routes.map(route => `  static const String ${route.name} = '${route.path}';`).join('\n')}
+
+  // Ruta inicial
+  static String get initialRoute => ${initialRoute};
+
+  // Mapa de rutas
+  static Map<String, WidgetBuilder> get routes {
+    return {
+${routes.map(route => `      ${route.name}: (context) => ${route.screenName}(),`).join('\n')}
+    };
+  }
+
+  // Métodos de navegación
+  static void navigateTo(BuildContext context, String routeName, {Object? arguments}) {
+    Navigator.pushNamed(context, routeName, arguments: arguments);
+  }
+
+  static void navigateReplace(BuildContext context, String routeName, {Object? arguments}) {
+    Navigator.pushReplacementNamed(context, routeName, arguments: arguments);
+  }
+
+  static void navigateAndClearStack(BuildContext context, String routeName, {Object? arguments}) {
+    Navigator.pushNamedAndRemoveUntil(
+      context, 
+      routeName, 
+      (route) => false,
+      arguments: arguments
+    );
+  }
+
+  static void goBack(BuildContext context) {
+    if (Navigator.canPop(context)) {
+      Navigator.pop(context);
+    }
+  }
+}
+
+// Extensión para facilitar navegación
+extension NavigationExtension on BuildContext {
+  void navigateTo(String routeName, {Object? arguments}) {
+    AppRoutes.navigateTo(this, routeName, arguments: arguments);
+  }
+
+  void navigateReplace(String routeName, {Object? arguments}) {
+    AppRoutes.navigateReplace(this, routeName, arguments: arguments);
+  }
+
+  void navigateAndClearStack(String routeName, {Object? arguments}) {
+    AppRoutes.navigateAndClearStack(this, routeName, arguments: arguments);
+  }
+
+  void goBack() {
+    AppRoutes.goBack(this);
+  }
+}`;
+}
+
+/**
+ * Genera el archivo navigation_utils.dart
+ */
+private generateNavigationUtilsFile(): string {
+  return `// lib/utils/navigation_utils.dart
+import 'package:flutter/material.dart';
+import '../routes/app_routes.dart';
+
+class NavigationUtils {
+  static final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
+  static BuildContext? get currentContext => navigatorKey.currentContext;
+
+  // Navegación sin contexto
+  static Future<T?> pushNamed<T extends Object?>(String routeName, {Object? arguments}) {
+    return navigatorKey.currentState!.pushNamed<T>(routeName, arguments: arguments);
+  }
+
+  static Future<T?> pushReplacementNamed<T extends Object?>(String routeName, {Object? arguments}) {
+    return navigatorKey.currentState!.pushReplacementNamed<T>(routeName, arguments: arguments);
+  }
+
+  static Future<T?> pushNamedAndRemoveUntil<T extends Object?>(
+    String routeName, 
+    bool Function(Route<dynamic>) predicate, 
+    {Object? arguments}
+  ) {
+    return navigatorKey.currentState!.pushNamedAndRemoveUntil<T>(
+      routeName, 
+      predicate, 
+      arguments: arguments
+    );
+  }
+
+  static void pop<T extends Object?>([T? result]) {
+    return navigatorKey.currentState!.pop<T>(result);
+  }
+
+  static bool canPop() {
+    return navigatorKey.currentState!.canPop();
+  }
+
+  // Métodos de conveniencia
+  static void goToHome() {
+    pushNamedAndRemoveUntil(AppRoutes.initialRoute, (route) => false);
+  }
+}`;
+}
+
+/**
+ * Genera el archivo main.dart actualizado con navegación
+ */
+private generateMainAppFile(routes: any[], projectName: string): string {
+  const className = this.toPascalCase(projectName);
+  
+  return `// lib/main.dart
+import 'package:flutter/material.dart';
+import 'routes/app_routes.dart';
+import 'utils/navigation_utils.dart';
+
+void main() {
+  runApp(${className}App());
+}
+
+class ${className}App extends StatelessWidget {
+  const ${className}App({Key? key}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: '${projectName}',
+      theme: ThemeData(
+        primarySwatch: Colors.blue,
+        visualDensity: VisualDensity.adaptivePlatformDensity,
+      ),
+      navigatorKey: NavigationUtils.navigatorKey,
+      initialRoute: AppRoutes.initialRoute,
+      routes: AppRoutes.routes,
+      debugShowCheckedModeBanner: false,
+      onGenerateRoute: (settings) {
+        final routeBuilder = AppRoutes.routes[settings.name];
+        if (routeBuilder != null) {
+          return MaterialPageRoute(
+            builder: routeBuilder,
+            settings: settings,
+          );
+        }
+        
+        // Ruta no encontrada
+        return MaterialPageRoute(
+          builder: (context) => const NotFoundScreen(),
+        );
+      },
+    );
+  }
+}
+
+// Pantalla para rutas no encontradas
+class NotFoundScreen extends StatelessWidget {
+  const NotFoundScreen({Key? key}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Página no encontrada'),
+      ),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.error_outline, size: 64, color: Colors.grey),
+            const SizedBox(height: 16),
+            const Text(
+              'Página no encontrada',
+              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 32),
+            ElevatedButton(
+              onPressed: () => context.navigateAndClearStack(AppRoutes.initialRoute),
+              child: const Text('Volver al inicio'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}`;
+}
+
+/**
+ * Genera un widget de navegación básico
+ */
+private generateAppNavigationFile(routes: any[]): string {
+  return `// lib/widgets/app_navigation.dart
+import 'package:flutter/material.dart';
+import '../routes/app_routes.dart';
+
+class AppDrawer extends StatelessWidget {
+  const AppDrawer({Key? key}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Drawer(
+      child: ListView(
+        padding: EdgeInsets.zero,
+        children: [
+          const DrawerHeader(
+            decoration: BoxDecoration(color: Colors.blue),
+            child: Text(
+              'Navegación',
+              style: TextStyle(color: Colors.white, fontSize: 24),
+            ),
+          ),
+${routes.map(route => `          ListTile(
+            leading: const Icon(Icons.${this.getIconForRoute(route.name)}),
+            title: Text('${route.description}'),
+            onTap: () {
+              Navigator.pop(context);
+              context.navigateTo(AppRoutes.${route.name});
+            },
+          ),`).join('\n')}
+        ],
+      ),
+    );
+  }
+}`;
+}
+
+/**
+ * Modifica el método processCode para incluir archivos de navegación
+ */
+
+/**
+ * Iconos para rutas comunes
+ */
+private getIconForRoute(routeName: string): string {
+  const iconMap = {
+    'home': 'home',
+    'login': 'login',
+    'register': 'person_add',
+    'profile': 'person',
+    'settings': 'settings',
+    'dashboard': 'dashboard',
+    'list': 'list',
+    'detail': 'info',
+    'search': 'search'
+  };
+
+  for (const [key, icon] of Object.entries(iconMap)) {
+    if (routeName.toLowerCase().includes(key)) {
+      return icon;
+    }
+  }
+  
+  return 'pages';
 }
 
 }

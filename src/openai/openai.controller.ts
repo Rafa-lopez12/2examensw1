@@ -121,98 +121,97 @@ async generateUIFromImage(
 
 
 
-  @Post('generate-flutter-from-screenshot')
-  @Auth()
-  @UseInterceptors(
-    FileInterceptor('image', {
-      storage: diskStorage({
-        destination: './uploads/screenshots',
-        filename: (req, file, cb) => {
-          // Genera un nombre único para el archivo
-          const uniqueSuffix = `${Date.now()}-${uuidv4()}`;
-          const ext = extname(file.originalname);
-          cb(null, `screenshot-${uniqueSuffix}${ext}`);
-        },
-      }),
-      fileFilter: (req, file, cb) => {
-        // Acepta solo imágenes
-        if (!file.originalname.match(/\.(jpg|jpeg|png|gif|bmp)$/)) {
-          return cb(
-            new HttpException(
-              'Solo se permiten archivos de imagen',
-              HttpStatus.BAD_REQUEST
-            ),
-            false
-          );
-        }
-        cb(null, true);
+@Post('generate-flutter-from-screenshot')
+@Auth()
+@UseInterceptors(
+  FileInterceptor('image', {
+    storage: diskStorage({
+      destination: './uploads/screenshots',
+      filename: (req, file, cb) => {
+        const uniqueSuffix = `${Date.now()}-${uuidv4()}`;
+        const ext = extname(file.originalname);
+        cb(null, `screenshot-${uniqueSuffix}${ext}`);
       },
-      limits: {
-        fileSize: 5 * 1024 * 1024, // 5MB tamaño máximo
-      },
-    })
-  )
-  async generateFlutterCodeFromScreenshot(
-    @UploadedFile() image,
-    @Body('pageName') pageName: string,
-    @Body('description') description: string,
-    @GetUser() user: User
-  ): Promise<CodeGenerationResult> {
-    try {
-      if (!image) {
-        throw new HttpException(
-          'No se proporcionó ninguna imagen',
-          HttpStatus.BAD_REQUEST
+    }),
+    fileFilter: (req, file, cb) => {
+      if (!file.originalname.match(/\.(jpg|jpeg|png|gif|bmp)$/)) {
+        return cb(
+          new HttpException(
+            'Solo se permiten archivos de imagen',
+            HttpStatus.BAD_REQUEST
+          ),
+          false
         );
       }
-
-      if (!pageName || pageName.trim() === '') {
-        throw new HttpException(
-          'El nombre de la página es obligatorio',
-          HttpStatus.BAD_REQUEST
-        );
-      }
-
-      this.logger.log(`Usuario ${user.id} solicitó generación de código Flutter para la pantalla "${pageName}"`);
-
-      // Leer la imagen como un Buffer
-      let imageBuffer;
-      if (image.buffer) {
-        // Si ya está como buffer, usarlo directamente
-        imageBuffer = image.buffer;
-      } else if (image.path) {
-        // Si tenemos la ruta del archivo guardado, leerlo
-        imageBuffer = fs.readFileSync(image.path);
-      } else {
-        throw new HttpException(
-          'Formato de imagen no válido',
-          HttpStatus.BAD_REQUEST
-        );
-      }
-
-      // Generar el código Flutter a partir de la captura de pantalla
-      const generatedCode = await this.openaiService.generateFlutterCodeFromScreenshot({
-        image: imageBuffer,
-        pageName,
-        description
-      });
-      
-      return {
-        success: true,
-        message: 'Código Flutter generado exitosamente a partir de captura de pantalla',
-        data: generatedCode,
-        generatedAt: new Date().toISOString()
-      };
-    } catch (error) {
-      this.logger.error(`Error al generar código Flutter: ${error.message}`);
-      
-      return {
-        success: false,
-        message: `Error al generar código Flutter desde captura: ${error.message}`,
-        error: error.message
-      };
+      cb(null, true);
+    },
+    limits: {
+      fileSize: 5 * 1024 * 1024,
+    },
+  })
+)
+async generateFlutterCodeFromScreenshot(
+  @UploadedFile() image,
+  @Body('pageName') pageName: string,
+  @Body('description') description: string,
+  @Body('projectId') projectId: string, // <- NUEVO PARÁMETRO
+  @GetUser() user: User
+): Promise<CodeGenerationResult> {
+  try {
+    if (!image) {
+      throw new HttpException(
+        'No se proporcionó ninguna imagen',
+        HttpStatus.BAD_REQUEST
+      );
     }
+
+    if (!pageName || pageName.trim() === '') {
+      throw new HttpException(
+        'El nombre de la página es obligatorio',
+        HttpStatus.BAD_REQUEST
+      );
+    }
+
+    this.logger.log(`Usuario ${user.id} solicitó generación de código Flutter para la pantalla "${pageName}"`);
+
+    // Leer la imagen como un Buffer
+    let imageBuffer;
+    if (image.buffer) {
+      imageBuffer = image.buffer;
+    } else if (image.path) {
+      imageBuffer = fs.readFileSync(image.path);
+    } else {
+      throw new HttpException(
+        'Formato de imagen no válido',
+        HttpStatus.BAD_REQUEST
+      );
+    }
+
+    // Generar el código Flutter a partir de la captura de pantalla
+    // MODIFICADO: Incluir projectId para generar navegación automática
+    const generatedCode = await this.openaiService.generateFlutterCodeFromScreenshot({
+      image: imageBuffer,
+      pageName,
+      description,
+      projectId 
+    });
+    
+    return {
+      success: true,
+      message: 'Código Flutter generado exitosamente a partir de captura de pantalla',
+      data: generatedCode,
+      generatedAt: new Date().toISOString()
+    };
+  } catch (error) {
+    this.logger.error(`Error al generar código Flutter: ${error.message}`);
+    
+    return {
+      success: false,
+      message: `Error al generar código Flutter desde captura: ${error.message}`,
+      error: error.message
+    };
   }
+}
 
   // Se puede mantener el endpoint antiguo de Angular como referencia o eliminarlo
   @Post('generate-from-screenshot')

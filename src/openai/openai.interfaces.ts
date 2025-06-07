@@ -45,7 +45,15 @@ export interface ProcessedResponse {
   models: FlutterModel[];
   services: FlutterService[];
   mainApp?: MainApp;
+  navigationFiles?: NavigationStructure; // <- NUEVO CAMPO
 }
+
+// export interface ScreenshotGenerationParams {
+//   image: Buffer | string;
+//   pageName: string;
+//   description?: string;
+//   projectId?: string; // <- NUEVO CAMPO OPCIONAL
+// }
 
 /**
  * Interfaz para los parámetros de generación de código desde captura
@@ -54,6 +62,7 @@ export interface ScreenshotGenerationParams {
   image: Buffer | string;
   pageName: string;
   description?: string;
+  projectId?:string
 }
 
 /**
@@ -132,4 +141,23 @@ export interface DetailedGenerationResult extends CodeGenerationResult {
   projectMetadata?: ProjectMetadata;
   bundle?: FlutterProjectBundle;
   previewImageUrl?: string;
+}
+
+export interface NavigationFiles {
+  mainApp: string;
+  simpleRoutes?: string; // Opcional
+}
+
+export interface NavigationRoute {
+  name: string;
+  screenName: string;
+  path: string;
+  isInitial: boolean;
+  description: string;
+  figuraCount: number;
+}
+
+export interface NavigationStructure {
+  routes: NavigationRoute[];
+  files: NavigationFiles;
 }
